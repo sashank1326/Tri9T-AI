@@ -73,6 +73,11 @@ def get_staleness_audits_collection() -> Collection:
     return get_mongo_db()["staleness_audits"]
 
 
+def get_document_trees_collection() -> Collection:
+    """Collection storing hierarchical document trees and node structures."""
+    return get_mongo_db()["document_trees"]
+
+
 def check_mongo_health() -> bool:
     """Check whether MongoDB is currently reachable."""
     try:

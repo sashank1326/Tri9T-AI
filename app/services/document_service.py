@@ -122,6 +122,45 @@ class DocumentService:
         self.db.commit()
         self.db.refresh(doc_version)
 
+        # Also persist full structured tree in MongoDB document_trees collection
+        try:
+            from app.db.mongo import get_document_trees_collection
+            trees_col = get_document_trees_collection()
+            tree_doc = {
+                "document_id": doc_version.document_id,
+                "version_id": doc_version.id,
+                "version_name": doc_version.version_name,
+                "file_name": doc_version.file_name,
+                "file_hash": doc_version.file_hash,
+                "root_hash": doc_version.root_hash,
+                "page_count": doc_version.page_count,
+                "node_count": len(flattened_nodes),
+                "created_at": doc_version.created_at.isoformat() if doc_version.created_at else None,
+                "nodes": [
+                    {
+                        "id": n.id,
+                        "parent_id": n.parent_id,
+                        "node_type": n.node_type,
+                        "title": n.title,
+                        "section_number": n.section_number,
+                        "section_path": n.section_path,
+                        "content": n.content,
+                        "content_hash": n.content_hash,
+                        "level": n.level,
+                        "order_index": n.order_index,
+                        "page_number": n.page_number
+                    }
+                    for n in flattened_nodes
+                ]
+            }
+            trees_col.replace_one(
+                {"document_id": doc_version.document_id, "version_name": doc_version.version_name},
+                tree_doc,
+                upsert=True
+            )
+        except Exception as e:
+            logger.warning("Could not persist document tree in MongoDB: %s", str(e))
+
         return DocumentVersionResponse(
             id=doc_version.id,
             document_id=doc_version.document_id,

@@ -187,6 +187,30 @@ When a test case or generation batch is retrieved:
    - **Case C (Node Unchanged)**: If all source node hashes match their counterparts in `v2` $\rightarrow$ `UP_TO_DATE`.
 5. Logs each staleness evaluation into MongoDB's `staleness_audits` collection for quality audit history.
 
+### Honest Discussion on Limitations: Syntactic vs. Semantic Staleness
+
+A critical design consideration in medical QA traceability is:
+> *Does a one-word cosmetic wording change get treated the same as a changed pressure threshold? Should it?*
+
+#### 1. How our Primary Approach Behaves
+Our core detection relies on **deterministic SHA-256 content hashing**:
+* If an engineer fixes a minor typo (*"the monitor"* $\rightarrow$ *"this monitor"*), the SHA-256 hash changes completely. The system flags the test case as `STALE_MODIFIED`.
+* If a critical clinical threshold is altered (*"40 mmHg"* $\rightarrow$ *"30 mmHg"* or *"300 cycles"* $\rightarrow$ *"250 cycles"*), the hash also changes, flagging `STALE_MODIFIED`.
+
+Under pure cryptographic hashing, **both changes are treated identically**.
+
+#### 2. Should They Be Treated the Same?
+* **In Semantic Theory: NO**. A grammatical edit does not invalidate the test verification steps or acceptance criteria, whereas changing an overpressure cutoff from 300 mmHg to 280 mmHg directly invalidates test tolerances and could risk patient safety.
+* **In Medical Regulatory Compliance (FDA 21 CFR Part 820 / IEC 62304): YES, as a default baseline**.
+  In medical device engineering, a **false positive** (alerting a QA engineer to review a 1-word wording fix) costs 10 seconds of human review. However, a **false negative** (silently missing a modified safety tolerance because a fuzzy semantic matcher deemed it "similar enough") can result in defective devices reaching clinical environments. Therefore, **strict cryptographic sensitivity is the safest baseline barrier**.
+
+#### 3. Recommended Production Enhancement (Two-Tier Evaluation)
+To prevent "alert fatigue" without compromising safety, we designed a **Two-Tier Staleness Pipeline**:
+1. **Tier 1 (Fast Deterministic Filter)**: SHA-256 hash comparison ($O(1)$ lookup). If hashes match, the node is 100% fresh with zero LLM API cost.
+2. **Tier 2 (Semantic Impact Classifier)**: When a hash mismatch occurs:
+   - Extract numerical tolerances and units via regex. If numerical quantities changed, immediately classify as **`CRITICAL_STALE_NUMERICAL`**.
+   - If only text structure changed, use a lightweight LLM call or embedding cosine similarity to categorize the diff as **`COSMETIC_CHANGE`** (test case remains valid, system auto-updates reference hash) versus **`BEHAVIORAL_CHANGE`** (test case requires regeneration).
+
 ---
 
 ## 9. Current Limitations & Future Work
