@@ -39,7 +39,9 @@ class LLMService:
 
     def __init__(self, use_mock: bool = False):
         self.settings = get_settings()
-        self.use_mock = use_mock or (self.settings.GEMINI_API_KEY in (None, "", "mock-or-dev-key"))
+        api_key = self.settings.GEMINI_API_KEY or ""
+        is_placeholder = api_key in ("", "mock-or-dev-key") or "YourActual" in api_key or "your_" in api_key.lower()
+        self.use_mock = use_mock or is_placeholder
         self._client = None
 
     def _get_gemini_client(self):

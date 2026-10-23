@@ -25,6 +25,20 @@ class NodeDiffItem(BaseModel):
     content_v2: Optional[str] = None
 
 
+class NodeChangeResponse(BaseModel):
+    node_id: str
+    document_id: str
+    source_version_id: str
+    source_version_name: str
+    target_version_id: str
+    target_version_name: str
+    section_path: str
+    has_changed: bool
+    status: NodeDiffStatus
+    diff_summary: str
+    unified_diff: Optional[str] = None
+
+
 class VersionDiffSummary(BaseModel):
     unchanged_count: int = 0
     modified_count: int = 0

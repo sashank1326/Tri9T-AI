@@ -3,11 +3,12 @@ from typing import List, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.core.diff import generate_text_diff, summarize_text_changes
-from app.core.exceptions import VersionNotFoundError
-from app.db.models import DocumentVersion, DocumentNode
+from app.core.exceptions import VersionNotFoundError, NodeNotFoundError, DocumentNotFoundError
+from app.db.models import Document, DocumentVersion, DocumentNode
 from app.schemas.diff import (
     NodeDiffStatus,
     NodeDiffItem,
+    NodeChangeResponse,
     VersionDiffSummary,
     DocumentCompareResponse
 )
@@ -20,6 +21,103 @@ class VersionService:
 
     def __init__(self, db: Session):
         self.db = db
+
+    def compare_node(
+        self,
+        document_id: str,
+        node_id: str,
+        target_version_id_or_name: Optional[str] = None
+    ) -> NodeChangeResponse:
+        """
+        Given a node ID, return whether it has changed across versions,
+        and if so, a lightweight diff summary.
+        """
+        node = self.db.query(DocumentNode).filter(DocumentNode.id == node_id).first()
+        if not node:
+            raise NodeNotFoundError(node_id)
+
+        source_ver = self.db.query(DocumentVersion).filter(DocumentVersion.id == node.version_id).first()
+        if not source_ver:
+            raise VersionNotFoundError(document_id, node.version_id)
+
+        # Resolve target version (default: latest version)
+        if target_version_id_or_name:
+            target_ver = self._resolve_version(document_id, target_version_id_or_name)
+        else:
+            target_ver = self.db.query(DocumentVersion).filter(
+                DocumentVersion.document_id == document_id
+            ).order_by(DocumentVersion.created_at.desc()).first()
+
+        if not target_ver:
+            raise VersionNotFoundError(document_id, "latest")
+
+        # Same version check
+        if target_ver.id == source_ver.id:
+            return NodeChangeResponse(
+                node_id=node.id,
+                document_id=document_id,
+                source_version_id=source_ver.id,
+                source_version_name=source_ver.version_name,
+                target_version_id=target_ver.id,
+                target_version_name=target_ver.version_name,
+                section_path=node.section_path,
+                has_changed=False,
+                status=NodeDiffStatus.UNCHANGED,
+                diff_summary="Node belongs to the active version.",
+                unified_diff=""
+            )
+
+        # Search matching node in target version by section_path
+        target_node = self.db.query(DocumentNode).filter(
+            DocumentNode.version_id == target_ver.id,
+            DocumentNode.section_path == node.section_path
+        ).first()
+
+        if not target_node:
+            return NodeChangeResponse(
+                node_id=node.id,
+                document_id=document_id,
+                source_version_id=source_ver.id,
+                source_version_name=source_ver.version_name,
+                target_version_id=target_ver.id,
+                target_version_name=target_ver.version_name,
+                section_path=node.section_path,
+                has_changed=True,
+                status=NodeDiffStatus.DELETED,
+                diff_summary=f"Section was deleted in version {target_ver.version_name}.",
+                unified_diff=f"- {node.content}"
+            )
+
+        if target_node.content_hash == node.content_hash:
+            return NodeChangeResponse(
+                node_id=node.id,
+                document_id=document_id,
+                source_version_id=source_ver.id,
+                source_version_name=source_ver.version_name,
+                target_version_id=target_ver.id,
+                target_version_name=target_ver.version_name,
+                section_path=node.section_path,
+                has_changed=False,
+                status=NodeDiffStatus.UNCHANGED,
+                diff_summary=f"Content is unchanged in version {target_ver.version_name}.",
+                unified_diff=""
+            )
+
+        # Node was modified
+        diff_info = summarize_text_changes(node.content, target_node.content)
+        return NodeChangeResponse(
+            node_id=node.id,
+            document_id=document_id,
+            source_version_id=source_ver.id,
+            source_version_name=source_ver.version_name,
+            target_version_id=target_ver.id,
+            target_version_name=target_ver.version_name,
+            section_path=node.section_path,
+            has_changed=True,
+            status=NodeDiffStatus.MODIFIED,
+            diff_summary=f"Modified in {target_ver.version_name}: {diff_info['summary']}",
+            unified_diff=diff_info["unified_diff"]
+        )
 
     def compare_versions(
         self,

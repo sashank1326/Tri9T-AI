@@ -255,18 +255,20 @@ class PDFExtractor:
         if sec_match:
             sec_num = sec_match.group(1)
             title = sec_match.group(2).strip()
-            # Level based on dot count: "1" -> 1, "1.1" -> 2, "1.1.2" -> 3
-            level = sec_num.count(".") + 1
-            return RawElement(
-                node_type="heading",
-                content=text,
-                page_number=page_num,
-                title=f"{sec_num} {title}",
-                section_number=sec_num,
-                level=level,
-                bounding_box=bbox,
-                metadata={"font_size": max_size, "is_bold": is_bold}
-            )
+            # A single-digit number without dot (like "1. Normal: systolic...") that is body font and not bold is a list item
+            is_heading_candidate = is_bold or (max_size >= body_font_size * 1.15) or (sec_num.count(".") >= 1)
+            if is_heading_candidate and not title.endswith(":"):
+                level = sec_num.count(".") + 1
+                return RawElement(
+                    node_type="heading",
+                    content=text,
+                    page_number=page_num,
+                    title=f"{sec_num} {title}",
+                    section_number=sec_num,
+                    level=level,
+                    bounding_box=bbox,
+                    metadata={"font_size": max_size, "is_bold": is_bold}
+                )
 
         # Check for Heading based on font size / bold styling
         is_large_font = max_size >= (body_font_size * 1.15)

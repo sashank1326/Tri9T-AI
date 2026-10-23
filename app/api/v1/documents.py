@@ -3,6 +3,8 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.sqlite import get_db
+from app.db.models import DocumentVersion
+from app.core.exceptions import VersionNotFoundError
 from app.schemas.document import (
     DocumentResponse,
     DocumentVersionResponse,
@@ -11,7 +13,7 @@ from app.schemas.document import (
     SectionSummary,
     DocumentSearchResponse
 )
-from app.schemas.diff import DocumentCompareResponse
+from app.schemas.diff import DocumentCompareResponse, NodeChangeResponse
 from app.services.document_service import DocumentService
 from app.services.version_service import VersionService
 
@@ -64,9 +66,31 @@ def get_document(document_id: str, db: Session = Depends(get_db)):
 
 
 @router.get(
+    "/{document_id}/sections",
+    response_model=List[SectionSummary],
+    summary="List top-level sections (defaults to latest version)"
+)
+def list_sections_default(
+    document_id: str,
+    version: Optional[str] = Query(None, description="Version ID or name; defaults to latest"),
+    db: Session = Depends(get_db)
+):
+    """List top-level sections with an optional version parameter (defaults to latest)."""
+    service = DocumentService(db)
+    if not version:
+        latest_ver = db.query(DocumentVersion).filter(
+            DocumentVersion.document_id == document_id
+        ).order_by(DocumentVersion.created_at.desc()).first()
+        if not latest_ver:
+            raise VersionNotFoundError(document_id, "latest")
+        version = latest_ver.id
+    return service.list_sections(document_id, version)
+
+
+@router.get(
     "/{document_id}/versions/{version_id}/sections",
     response_model=List[SectionSummary],
-    summary="List document sections / table of contents"
+    summary="List document sections / table of contents for specific version"
 )
 def list_sections(document_id: str, version_id: str, db: Session = Depends(get_db)):
     """Retrieve top-level headings and sections with child counts for a specific version."""
@@ -94,6 +118,22 @@ def get_node(document_id: str, version_id: str, node_id: str, db: Session = Depe
     """Retrieve a specific document node, its content, hash, and metadata."""
     service = DocumentService(db)
     return service.get_node(node_id)
+
+
+@router.get(
+    "/{document_id}/nodes/{node_id}/diff",
+    response_model=NodeChangeResponse,
+    summary="Check if a specific node changed across versions"
+)
+def get_node_diff(
+    document_id: str,
+    node_id: str,
+    target_version: Optional[str] = Query(None, description="Target version to compare against (defaults to latest)"),
+    db: Session = Depends(get_db)
+):
+    """Given a node ID, return whether it has changed across versions, and if so, a lightweight diff summary."""
+    service = VersionService(db)
+    return service.compare_node(document_id, node_id, target_version)
 
 
 @router.get(
